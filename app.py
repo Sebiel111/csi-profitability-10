@@ -4,31 +4,31 @@ import pandas as pd
 
 # CSS styling
 st.markdown('''
-    <style>
-        body, html { background-color: #f9f9f9; }
-        .block-container { padding: 2rem; font-size: 20px; }
-        h1 { color: #1c1c1e; }
-        .stSlider label, .stSlider, .stTextInput input, .stTextInput label {
-            font-size: 1.5rem !important;
-        }
-        .stTextInput input {
-            text-align: right;
-            font-size: 1.5rem !important;
-        }
-        .stButton button {
-            background-color: #4F46E5;
-            color: white;
-            font-weight: bold;
-            border-radius: 0.5rem;
-            padding: 1rem 2rem;
-            font-size: 1.5rem;
-        }
-        table.custom { width:100%; border-collapse: collapse; font-size:22px; }
-        table.custom th { text-align:center; font-weight:bold; border-bottom:1px solid #ccc; padding:10px; }
-        table.custom td { text-align:right; padding:10px; border-bottom:1px solid #eee; }
-        table.custom td.left { text-align:left; }
-        table.custom tr.total-row { font-weight:bold; background-color: #eeeeee; }
-    </style>
+<style>
+  body, html { background-color: #f9f9f9; }
+  .block-container { padding: 2rem; font-size: 20px; }
+  h1 { color: #1c1c1e; }
+  .stSlider label, .stSlider, .stTextInput input, .stTextInput label {
+      font-size: 1.5rem !important;
+  }
+  .stTextInput input {
+      text-align: right;
+      font-size: 1.5rem !important;
+  }
+  .stButton button {
+      background-color: #4F46E5;
+      color: white;
+      font-weight: bold;
+      border-radius: 0.5rem;
+      padding: 1rem 2rem;
+      font-size: 1.5rem;
+  }
+  table.custom { width:100%; border-collapse: collapse; font-size:22px; }
+  table.custom th { text-align:center; font-weight:bold; border-bottom:1px solid #ccc; padding:10px; }
+  table.custom td { text-align:right; padding:10px; border-bottom:1px solid #eee; }
+  table.custom td.left { text-align:left; }
+  table.custom tr.total-row { font-weight:bold; background-color: #eeeeee; }
+</style>
 ''', unsafe_allow_html=True)
 
 # Translation labels
@@ -84,9 +84,95 @@ labels = {
                 "total_profit": "Total vinst", "total": "Totalt", "download": "Ladda ner CSV"}
 }
 
-# UI
+# Select language
 language = st.selectbox(labels["English"]["language"], list(labels.keys()))
 L = labels[language]
 
+# Title
 st.title(L["title"])
-# ... rest of the code unchanged ...
+
+# Simulation logic
+def get_csi_percentages(score):
+    if score >= 901: return 0.74, 0.35
+    if score >= 801: return 0.51, 0.24
+    if score >= 701: return 0.32, 0.19
+    return 0.14, 0.16
+
+def simulate(csi, count, s_profit, own_years, warranty, v_profit):
+    years = list(range(2026, 2041))
+    service = {y:0 for y in years}
+    repeat = {y:0 for y in years}
+    total = {y:0 for y in years}
+    waves = [{"year":2025, "count":count, "repeated":False}]
+    s_pct, r_pct = get_csi_percentages(csi)
+    for y in years:
+        new = []
+        for w in waves:
+            age = y - w["year"]
+            if 1 <= age <= warranty:
+                service[y] += w["count"] * s_pct
+            if not w["repeated"] and age >= own_years:
+                r = w["count"] * r_pct
+                repeat[y] += r
+                w["repeated"] = True
+                new.append({"year":y, "count":r, "repeated":False})
+        waves.extend(new)
+        total[y] = round(service[y]) * s_profit + round(repeat[y]) * v_profit
+
+    df = pd.DataFrame({
+        L["year"]: years,
+        L["service_customers"]: [round(service[y]) for y in years],
+        L["repeat_purchases"]: [round(repeat[y]) for y in years],
+        L["total_profit"]: [round(total[y]) for y in years]
+    })
+    totals = {
+        L["year"]: L["total"],
+        L["service_customers"]: int(df[L["service_customers"]].sum()),
+        L["repeat_purchases"]: int(df[L["repeat_purchases"]].sum()),
+        L["total_profit"]: int(df[L["total_profit"]].sum())
+    }
+    df = pd.concat([pd.DataFrame([totals]), df], ignore_index=True)
+    return df
+
+def format_number(n):
+    if language == "Svenska":
+        return f"{n:,}".replace(",", " ")
+    if language == "English":
+        return f"{n:,}"
+    return f"{n:,}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+def render_table(df):
+    html = "<table class='custom'><thead><tr>"
+    for col in df.columns:
+        html += f"<th>{col}</th>"
+    html += "</tr></thead><tbody>"
+    for _, row in df.iterrows():
+        cls = " class='total-row'" if row[df.columns[0]] == L["total"] else ""
+        html += f"<tr{cls}><td class='left'>{row[df.columns[0]]}</td>"
+        for val in row.iloc[1:]:
+            html += f"<td>{format_number(val)}</td>"
+        html += "</tr>"
+    html += "</tbody></table>"
+    return html
+
+with st.form("form"):
+    csi = st.slider(L["csi_score"], 0, 1000, 870)
+    # Inputs inline with labels in specified order
+    sample_col, own_col, vp_col, warrant_col, sp_col = st.columns([2,2,2,2,2])
+    sample = sample_col.text_input(L["sample_size"], value=format_number(100), key="sample")
+    own = own_col.text_input(L["ownership_duration"], value=str(2), key="own")
+    vp = vp_col.text_input(L["vehicle_profit"], value=format_number(1225), key="vp")
+    warranty = warrant_col.text_input(L["warranty_duration"], value=str(3), key="warranty")
+    sp = sp_col.text_input(L["service_profit"], value=format_number(350), key="sp")
+    go = st.form_submit_button(L["run"])
+
+if go:
+    count = int(sample.replace(" ","").replace(",",""))
+    own_years = float(own.replace(",",".")) 
+    warranty_years = float(warranty.replace(",",".")) 
+    vprofit = int(vp.replace(" ","").replace(",",""))
+    sprofit = int(sp.replace(" ","").replace(",",""))
+    df = simulate(csi, count, sprofit, own_years, warranty_years, vprofit)
+    st.subheader(L["results"])
+    st.markdown(render_table(df), unsafe_allow_html=True)
+    st.download_button(L["download"], df.to_csv(index=False).encode("utf-8"), "csi_profitability.csv", "text/csv")
